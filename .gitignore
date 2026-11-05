@@ -62,3 +62,22 @@ captures/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Android Studio project settings
+.idea/
+
+# Environment variables and secrets
+.env
+**/.env
+.env.*
+!.env.example
+
+# Node.js dependencies
+node_modules/
+**/node_modules/
+
+# Local SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
