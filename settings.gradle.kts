@@ -21,3 +21,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "ResQMesh"
 include(":app")
+include(":core:security")
