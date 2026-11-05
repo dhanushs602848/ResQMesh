@@ -36,6 +36,7 @@ class AndroidKeystoreResponderKeyProvider(
         System.arraycopy(ciphertext, 0, packed, cipher.iv.size, ciphertext.size)
         preferences.edit().putString(storageKey(keyId), Base64.encodeToString(packed, Base64.NO_WRAP)).apply()
         packed.fill(0)
+        ciphertext.fill(0)
     }
 
     @Synchronized
@@ -57,8 +58,12 @@ class AndroidKeystoreResponderKeyProvider(
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, getOrCreateWrappingKey(), GCMParameterSpec(GCM_TAG_BITS, nonce))
         cipher.updateAAD(keyId.toByteArray(StandardCharsets.UTF_8))
-        val material = cipher.doFinal(wrapped)
-        wrapped.fill(0)
+        val material = try {
+            cipher.doFinal(wrapped)
+        } finally {
+            wrapped.fill(0)
+            nonce.fill(0)
+        }
         if (material.size != AES_256_BYTES) {
             material.fill(0)
             throw GeneralSecurityException("Stored responder key has an invalid size.")
@@ -67,7 +72,6 @@ class AndroidKeystoreResponderKeyProvider(
             SecretKeySpec(material, "AES")
         } finally {
             material.fill(0)
-            nonce.fill(0)
         }
     }
 

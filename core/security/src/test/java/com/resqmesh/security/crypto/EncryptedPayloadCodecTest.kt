@@ -11,7 +11,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class EncryptedPayloadCodecTest {
-    private val groupKey = ByteArray(32) { (it * 7 + 3).toByte() }
+    private val groupKey = ByteArray(32).also(SecureRandom()::nextBytes)
     private val keyId = "demo-group-1"
 
     @Test fun encryptDecryptSupportsSosAndNormalPayloads() {
@@ -28,7 +28,7 @@ class EncryptedPayloadCodecTest {
     @Test fun wrongKeyIsRejected() {
         val packet = codec(groupKey).encrypt(keyId, ResponderMessageType.SOS, byteArrayOf(1, 2, 3))
         assertThrows(InvalidEncryptedPayloadException::class.java) {
-            codec(ByteArray(32) { (it + 1).toByte() }).decrypt(packet)
+            codec(ByteArray(32).also(SecureRandom()::nextBytes)).decrypt(packet)
         }
     }
 
