@@ -20,7 +20,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.GpsFixed
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
@@ -40,6 +43,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,19 +53,23 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.resqmesh.app.BackendConnectionTest
 import com.resqmesh.app.data.model.SystemTelemetry
 import com.resqmesh.app.navigation.Screen
 import com.resqmesh.app.ui.components.FuturisticBottomBar
 import com.resqmesh.app.ui.components.GlassCard
+import com.resqmesh.app.ui.components.PulsingDot
 import com.resqmesh.app.ui.components.ResQCard
 import com.resqmesh.app.ui.components.ResQTopBar
 import com.resqmesh.app.ui.theme.DeepSpaceBlack
 import com.resqmesh.app.ui.theme.ElectricCyan
+import com.resqmesh.app.ui.theme.EmergencyRed
 import com.resqmesh.app.ui.theme.SafeGreen
 import com.resqmesh.app.ui.theme.TextPrimary
 import com.resqmesh.app.ui.theme.TextSecondary
 import com.resqmesh.app.ui.theme.WarningAmber
 import com.resqmesh.app.ui.viewmodel.ResQMeshViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
@@ -74,6 +82,11 @@ fun SettingsScreen(
     onNavigateToMap: () -> Unit = {}
 ) {
     val telemetry by (viewModel?.telemetry?.collectAsState() ?: remember { mutableStateOf(SystemTelemetry()) })
+    val pendingUploadCount by (viewModel?.pendingUploadCount?.collectAsState() ?: remember { mutableStateOf(0) })
+    val coroutineScope = rememberCoroutineScope()
+    var connectionStatus by remember { mutableStateOf<String?>(null) }
+    var isTestingConnection by remember { mutableStateOf(false) }
+    var isRetryingUploads by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -161,6 +174,109 @@ fun SettingsScreen(
                         value = "${telemetry.batteryPercent}% (Normal)",
                         tint = SafeGreen
                     )
+                }
+            }
+
+            // Backend Uplink & Cloud Gateway Connection Test
+            item {
+                SettingsSection(title = "BACKEND UPLINK & CLOUD GATEWAY") {
+                    SettingsRow(
+                        icon = Icons.Default.Hub,
+                        label = "Server Endpoint",
+                        value = "http://172.16.19.160:3000/",
+                        tint = ElectricCyan
+                    )
+
+                    SettingsRow(
+                        icon = if (pendingUploadCount == 0) Icons.Default.CloudDone else Icons.Default.CloudQueue,
+                        label = "Offline SOS Queue",
+                        value = if (pendingUploadCount == 0) "Synchronized (0 pending)" else "$pendingUploadCount pending upload",
+                        tint = if (pendingUploadCount == 0) SafeGreen else WarningAmber
+                    )
+
+                    if (pendingUploadCount > 0) {
+                        Button(
+                            onClick = {
+                                if (!isRetryingUploads) {
+                                    isRetryingUploads = true
+                                    coroutineScope.launch {
+                                        viewModel?.retryUploads()
+                                        isRetryingUploads = false
+                                    }
+                                }
+                            },
+                            enabled = !isRetryingUploads,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = WarningAmber,
+                                contentColor = DeepSpaceBlack,
+                                disabledContainerColor = WarningAmber.copy(alpha = 0.4f),
+                                disabledContentColor = DeepSpaceBlack.copy(alpha = 0.6f)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (isRetryingUploads) "RETRYING UPLOADS..." else "Retry Pending Uploads ($pendingUploadCount)",
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp
+                            )
+                        }
+                    }
+
+                    connectionStatus?.let { status ->
+                        val isSuccess = status.startsWith("CONNECTED")
+                        val statusColor = if (isSuccess) SafeGreen else EmergencyRed
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(statusColor.copy(alpha = 0.12f))
+                                .border(1.dp, statusColor.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                PulsingDot(color = statusColor, size = 8.dp)
+                                Text(
+                                    text = status,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = statusColor,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            if (!isTestingConnection) {
+                                isTestingConnection = true
+                                connectionStatus = "Connecting to backend..."
+                                coroutineScope.launch {
+                                    connectionStatus = BackendConnectionTest.testConnection()
+                                    isTestingConnection = false
+                                }
+                            }
+                        },
+                        enabled = !isTestingConnection,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = ElectricCyan,
+                            contentColor = DeepSpaceBlack,
+                            disabledContainerColor = ElectricCyan.copy(alpha = 0.4f),
+                            disabledContentColor = DeepSpaceBlack.copy(alpha = 0.6f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = if (isTestingConnection) "TESTING CONNECTION..." else "Test Backend Connection",
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                    }
                 }
             }
 

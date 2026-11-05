@@ -91,7 +91,7 @@ fun RescueMapScreen(
 ) {
     var zoomLevel by remember { mutableFloatStateOf(1.0f) }
     val location by (viewModel?.location?.collectAsState() ?: remember {
-        mutableStateOf(GeoCoordinate(12.9716, 77.5946, 920.0, 5.0f))
+        mutableStateOf<GeoCoordinate?>(null)
     })
     val broadcasts by (viewModel?.broadcasts?.collectAsState() ?: remember { mutableStateOf(emptyList()) })
 
@@ -162,8 +162,8 @@ fun RescueMapScreen(
 
                 // GPS Telemetry Banner
                 item {
-                    val latStr = location?.latitude?.let { "%.4f° N".format(it) } ?: "12.9716° N"
-                    val lonStr = location?.longitude?.let { "%.4f° E".format(it) } ?: "77.5946° E"
+                    val latStr = location?.latitude?.let { "%.4f° N".format(it) } ?: "ACQUIRING..."
+                    val lonStr = location?.longitude?.let { "%.4f° E".format(it) } ?: "GPS LOCK"
                     val accStr = location?.accuracyMeters?.let { " • Acc: ±${it.toInt()}m" } ?: ""
 
                     GlassCard {

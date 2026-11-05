@@ -22,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Emergency
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -43,10 +45,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.resqmesh.app.data.model.EmergencyMessage
 import com.resqmesh.app.data.model.IncidentPriority
+import com.resqmesh.app.data.model.UploadStatus
 import com.resqmesh.app.navigation.Screen
 import com.resqmesh.app.ui.components.FuturisticBottomBar
 import com.resqmesh.app.ui.components.GlassCard
@@ -72,42 +76,20 @@ fun AlertsScreen(
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
 
-    val liveBroadcasts by (viewModel?.broadcasts?.collectAsState() ?: remember {
-        mutableStateOf(
-            listOf(
-                EmergencyMessage(
-                    id = "BC-901",
-                    senderId = "RQM-NODE-ALPHA",
-                    senderName = "Forward Post Alpha",
-                    title = "Critical Medical Distress Broadcast",
-                    content = "Relayed SOS: First responder assistance required at Sector 4 North coordinates.",
-                    timestamp = System.currentTimeMillis() - 180000,
-                    priority = IncidentPriority.CRITICAL,
-                    hopCount = 2
-                ),
-                EmergencyMessage(
-                    id = "BC-844",
-                    senderId = "WEATHER-RELAY-02",
-                    senderName = "Telemetry Sentinel",
-                    title = "Flash Flood Advisory Alert",
-                    content = "Regional river water rise detected. Mesh routing switched to elevated bridge nodes.",
-                    timestamp = System.currentTimeMillis() - 1080000,
-                    priority = IncidentPriority.HIGH,
-                    hopCount = 3
-                ),
-                EmergencyMessage(
-                    id = "BC-720",
-                    senderId = "LOCAL-HOST",
-                    senderName = "Mesh Router Daemon",
-                    title = "Mesh Routing Table Synchronized",
-                    content = "3 peer relay nodes linked into autonomous multi-hop message forwarding group.",
-                    timestamp = System.currentTimeMillis() - 2040000,
-                    priority = IncidentPriority.INFO,
-                    hopCount = 0
-                )
-            )
-        )
+    val allBroadcasts by (viewModel?.broadcasts?.collectAsState() ?: remember {
+        mutableStateOf(emptyList())
     })
+
+    // Segregate real mesh live signals from reference simulation alerts
+    val liveAlerts = remember(allBroadcasts) { allBroadcasts.filter { !it.isDemo } }
+    val demoAlerts = remember(allBroadcasts) { allBroadcasts.filter { it.isDemo } }
+
+    val displayedList = when (selectedTab) {
+        0 -> liveAlerts // All real live alerts (incoming + local)
+        1 -> liveAlerts.filter { it.priority == IncidentPriority.CRITICAL || it.priority == IncidentPriority.HIGH }
+        2 -> demoAlerts // Reference simulation alerts
+        else -> liveAlerts
+    }
 
     Scaffold(
         topBar = {
@@ -137,7 +119,7 @@ fun AlertsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Tactical Tabs (All, Distress, System)
+            // Tactical Tabs: Live Feed, Distress Only, Simulation Mode
             item {
                 TabRow(
                     selectedTabIndex = selectedTab,
@@ -151,7 +133,12 @@ fun AlertsScreen(
                         )
                     }
                 ) {
-                    listOf("ALL ALERTS", "DISTRESS", "SYSTEM").forEachIndexed { idx, label ->
+                    val tabs = listOf(
+                        "LIVE FEED (${liveAlerts.size})",
+                        "CRITICAL",
+                        "SIMULATION (${demoAlerts.size})"
+                    )
+                    tabs.forEachIndexed { idx, label ->
                         Tab(
                             selected = selectedTab == idx,
                             onClick = { selectedTab = idx },
@@ -176,10 +163,17 @@ fun AlertsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        PulsingDot(color = WarningAmber, size = 8.dp)
+                        PulsingDot(
+                            color = if (liveAlerts.isNotEmpty()) EmergencyRed else SafeGreen,
+                            size = 8.dp
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "${liveBroadcasts.size} BROADCASTS RECEIVED ACROSS MESH",
+                            text = if (selectedTab == 2) {
+                                "${demoAlerts.size} REFERENCE DEMO ALERTS"
+                            } else {
+                                "${liveAlerts.size} LIVE RESCUE BROADCAST(S)"
+                            },
                             style = MaterialTheme.typography.labelSmall,
                             color = TextSecondary,
                             fontWeight = FontWeight.Bold
@@ -194,24 +188,68 @@ fun AlertsScreen(
                 }
             }
 
-            // Broadcast Cards List
-            val filtered = when (selectedTab) {
-                1 -> liveBroadcasts.filter { it.priority == IncidentPriority.CRITICAL || it.priority == IncidentPriority.HIGH }
-                2 -> liveBroadcasts.filter { it.priority == IncidentPriority.INFO || it.priority == IncidentPriority.NORMAL }
-                else -> liveBroadcasts
-            }
-
-            items(filtered.size) { index ->
-                val broadcast = filtered[index]
-                TacticalBroadcastCard(
-                    item = broadcast,
-                    onClick = {
-                        viewModel?.acknowledgeAlert(broadcast.id)
-                    }
-                )
+            // Empty state for Live Feed if no real incoming or local SOS exists
+            if (displayedList.isEmpty()) {
+                item {
+                    EmptyAlertsCard(selectedTab = selectedTab)
+                }
+            } else {
+                items(displayedList.size) { index ->
+                    val broadcast = displayedList[index]
+                    TacticalBroadcastCard(
+                        item = broadcast,
+                        onClick = {
+                            viewModel?.acknowledgeAlert(broadcast.id)
+                        }
+                    )
+                }
             }
 
             item { Spacer(modifier = Modifier.height(16.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun EmptyAlertsCard(selectedTab: Int) {
+    GlassCard(borderColor = ElectricCyan.copy(alpha = 0.3f)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 24.dp, horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(ElectricCyan.copy(alpha = 0.1f))
+                    .border(1.dp, ElectricCyan.copy(alpha = 0.4f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Sensors,
+                    contentDescription = null,
+                    tint = ElectricCyan,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = if (selectedTab == 1) "NO CRITICAL DISTRESS SIGNALS" else "NO LIVE DISTRESS SIGNALS DETECTED",
+                style = MaterialTheme.typography.titleSmall,
+                color = TextPrimary,
+                fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "Listening on BLE Service UUID 7b1f3c8a... When nearby peer nodes transmit an emergency distress beacon, it will be received and surfaced here in real time.",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                textAlign = TextAlign.Center,
+                lineHeight = 18.sp
+            )
         }
     }
 }
@@ -241,7 +279,7 @@ private fun TacticalBroadcastCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(44.dp)
                     .clip(CircleShape)
                     .background(accentColor.copy(alpha = 0.15f))
                     .border(1.dp, accentColor.copy(alpha = 0.5f), CircleShape),
@@ -251,13 +289,14 @@ private fun TacticalBroadcastCard(
                     imageVector = if (item.isAcknowledged) Icons.Default.CheckCircle else icon,
                     contentDescription = null,
                     tint = if (item.isAcknowledged) SafeGreen else accentColor,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             }
 
             Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
+                // Header: Title & Time
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -267,7 +306,8 @@ private fun TacticalBroadcastCard(
                         text = item.title,
                         style = MaterialTheme.typography.titleSmall,
                         color = TextPrimary,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
                     )
                     Text(
                         text = timeText,
@@ -279,6 +319,7 @@ private fun TacticalBroadcastCard(
 
                 Spacer(modifier = Modifier.height(4.dp))
 
+                // Distress details
                 Text(
                     text = item.content,
                     style = MaterialTheme.typography.bodySmall,
@@ -288,15 +329,77 @@ private fun TacticalBroadcastCard(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
+                // GPS Pinpoint Coordinates if present
+                if (item.location != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LocationOn,
+                            contentDescription = null,
+                            tint = SafeGreen,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "GPS: %.4f° N, %.4f° E".format(item.location.latitude, item.location.longitude),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 10.sp,
+                            color = SafeGreen,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                // Origin / Relaying Metadata
+                val routingText = when {
+                    item.isDemo -> "Simulated Node: ${item.senderName} • Hops: ${item.hopCount}"
+                    item.isReceived -> "Relayed by ${item.senderName} • Origin: ${item.originNodeId ?: item.senderId} • Hops: ${item.hopCount}"
+                    else -> "Origin: Local Device (${item.senderId}) • Hops: 0"
+                }
+
+                Text(
+                    text = routingText,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontSize = 10.sp,
+                    color = TextSecondary,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+
+                // Tactical Badges Row
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Type Badge: INCOMING / LOCAL / DEMO
+                    val (typeLabel, typeColor) = when {
+                        item.isDemo -> "SIMULATION" to TextSecondary
+                        item.isReceived -> "INCOMING SOS" to ElectricCyan
+                        else -> "LOCAL BEACON" to EmergencyRed
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(typeColor.copy(alpha = 0.15f))
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = typeLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 9.sp,
+                            color = typeColor,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+
+                    // Priority Badge
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
                             .background(accentColor.copy(alpha = 0.15f))
-                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                            .padding(horizontal = 7.dp, vertical = 2.dp)
                     ) {
                         Text(
                             text = item.priority.displayName,
@@ -307,12 +410,41 @@ private fun TacticalBroadcastCard(
                         )
                     }
 
-                    Text(
-                        text = "• ${item.senderName} • Hops: ${item.hopCount}${if (item.isAcknowledged) " • ACKNOWLEDGED" else ""}",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.sp,
-                        color = if (item.isAcknowledged) SafeGreen else TextSecondary
-                    )
+                    // Uplink Badge
+                    if (item.uploadStatus != UploadStatus.NOT_APPLICABLE) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(item.uploadStatus.color.copy(alpha = 0.15f))
+                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "CLOUD: ${item.uploadStatus.displayName}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 9.sp,
+                                color = item.uploadStatus.color,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+
+                    if (item.isAcknowledged) {
+                        val ackText = if (item.acknowledgedBy.isNotEmpty()) {
+                            val count = item.acknowledgedBy.size
+                            val peersLabel = if (count == 1) "peer" else "peers"
+                            val nodesStr = item.acknowledgedBy.joinToString(", ") { it.takeLast(6) }
+                            "• ACKNOWLEDGED ($count $peersLabel: $nodesStr)"
+                        } else {
+                            "• ACKNOWLEDGED"
+                        }
+                        Text(
+                            text = ackText,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 9.sp,
+                            color = SafeGreen,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }

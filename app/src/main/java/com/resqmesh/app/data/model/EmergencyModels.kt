@@ -38,6 +38,17 @@ enum class IncidentPriority(val displayName: String, val color: Color) {
 }
 
 /**
+ * Status of backend cloud uplink for newly generated emergency incidents.
+ */
+enum class UploadStatus(val displayName: String, val color: Color) {
+    NOT_APPLICABLE("LOCAL ONLY", SafeGreen),
+    PENDING("PENDING", WarningAmber),
+    UPLOADING("UPLOADING", ElectricCyan),
+    UPLOADED("UPLOADED", SafeGreen),
+    FAILED("FAILED / RETRY QUEUED", WarningAmber)
+}
+
+/**
  * Emergency broadcast alert or peer message relayed over mesh.
  */
 data class EmergencyMessage(
@@ -50,7 +61,13 @@ data class EmergencyMessage(
     val priority: IncidentPriority,
     val hopCount: Int,
     val location: GeoCoordinate? = null,
-    val isAcknowledged: Boolean = false
+    val isAcknowledged: Boolean = false,
+    val uploadStatus: UploadStatus = UploadStatus.NOT_APPLICABLE,
+    val originNodeId: String? = null,
+    val isReceived: Boolean = false,
+    val isDemo: Boolean = false,
+    val acknowledgedBy: List<String> = emptyList(),
+    val acknowledgedAt: Long? = null
 )
 
 /**

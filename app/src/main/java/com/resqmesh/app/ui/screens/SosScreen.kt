@@ -58,8 +58,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import com.resqmesh.app.data.location.LocationState
+import com.resqmesh.app.data.location.LocationStatus
 import com.resqmesh.app.data.model.IncidentPriority
 import com.resqmesh.app.data.model.SystemTelemetry
+import com.resqmesh.app.data.model.UploadStatus
 import com.resqmesh.app.ui.components.GlassCard
 import com.resqmesh.app.ui.components.GlowCard
 import com.resqmesh.app.ui.components.PulsingDot
@@ -89,12 +95,23 @@ fun SosScreen(
     viewModel: ResQMeshViewModel? = null,
     onNavigateBack: () -> Unit
 ) {
+    val context = LocalContext.current
     val telemetry by (viewModel?.telemetry?.collectAsState() ?: remember { mutableStateOf(SystemTelemetry()) })
+    val locationState by (viewModel?.locationState?.collectAsState() ?: remember { mutableStateOf(LocationState()) })
     val location by (viewModel?.location?.collectAsState() ?: remember { mutableStateOf(null) })
+    val latestUploadStatus by (viewModel?.latestUploadStatus?.collectAsState() ?: remember { mutableStateOf(null) })
+    val broadcasts by (viewModel?.broadcasts?.collectAsState() ?: remember { mutableStateOf(emptyList()) })
     var localSosActive by remember { mutableStateOf(false) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        viewModel?.refreshMeshTopology()
+    }
 
     // Reflect ViewModel state or fallback to local toggle
     val isSosActive = telemetry.activeSosBeacon || localSosActive
+    val activeLocalSos = broadcasts.firstOrNull { !it.isReceived && !it.isDemo }
     var selectedEmergencyType by remember { mutableStateOf(EmergencyType.MEDICAL) }
     var showConfirmDialog by remember { mutableStateOf(false) }
 
@@ -209,8 +226,14 @@ fun SosScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    val gpsLabel = if (location != null) "FIXED" else "ACQUIRING"
-                    val gpsTint = if (location != null) SafeGreen else WarningAmber
+                    val (gpsLabel, gpsTint) = when (locationState.status) {
+                        LocationStatus.FIXED -> "FIXED" to SafeGreen
+                        LocationStatus.SEARCHING -> "SEARCHING" to WarningAmber
+                        LocationStatus.STALE -> "STALE" to WarningAmber
+                        LocationStatus.PERMISSION_DENIED -> "PERMISSION DENIED" to EmergencyRed
+                        LocationStatus.LOCATION_DISABLED -> "LOCATION DISABLED" to EmergencyRed
+                        LocationStatus.UNAVAILABLE -> "UNAVAILABLE" to EmergencyRed
+                    }
                     TelemetryPill(
                         modifier = Modifier.weight(1f),
                         icon = Icons.Default.MyLocation,
@@ -232,6 +255,140 @@ fun SosScreen(
                         value = if (isSosActive) "ACTIVE" else "STANDBY",
                         tint = if (isSosActive) EmergencyRed else SafeGreen
                     )
+                }
+            }
+
+            // 4a. Live GPS Location & Satellite Telemetry Card
+            item {
+                LocationTelemetryCard(
+                    locationState = locationState,
+                    onRequestPermission = {
+                        permissionLauncher.launch(
+                            arrayOf(
+                                android.Manifest.permission.ACCESS_FINE_LOCATION,
+                                android.Manifest.permission.ACCESS_COARSE_LOCATION
+                            )
+                        )
+                    },
+                    onOpenLocationSettings = {
+                        try {
+                            context.startActivity(android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                        } catch (_: Exception) {}
+                    }
+                )
+            }
+
+            // 4b. Cloud Uplink Status Card
+            if (latestUploadStatus != null && latestUploadStatus != UploadStatus.NOT_APPLICABLE) {
+                item {
+                    val status = latestUploadStatus!!
+                    val statusColor = when (status) {
+                        UploadStatus.UPLOADED -> SafeGreen
+                        UploadStatus.UPLOADING -> ElectricCyan
+                        UploadStatus.PENDING -> WarningAmber
+                        UploadStatus.FAILED -> EmergencyRed
+                        else -> ElectricCyan
+                    }
+                    val statusText = when (status) {
+                        UploadStatus.UPLOADED -> "UPLOADED: Stored on ResQMesh Cloud"
+                        UploadStatus.UPLOADING -> "UPLOADING: Transmitting to Backend..."
+                        UploadStatus.PENDING -> "PENDING: Queued in Offline Storage"
+                        UploadStatus.FAILED -> "FAILED / QUEUED FOR RETRY"
+                        else -> "LOCAL ONLY"
+                    }
+
+                    GlassCard(borderColor = statusColor.copy(alpha = 0.5f)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                PulsingDot(color = statusColor, size = 10.dp)
+                                Column {
+                                    Text(
+                                        text = "BACKEND CLOUD UPLINK",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = TextSecondary,
+                                        letterSpacing = 1.sp
+                                    )
+                                    Text(
+                                        text = statusText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = statusColor,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            if (status == UploadStatus.FAILED) {
+                                Button(
+                                    onClick = { viewModel?.retryUploads() },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = EmergencyRed,
+                                        contentColor = Color.White
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                ) {
+                                    Text("RETRY", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4c. BLE Mesh Peer Acknowledgement Feedback
+            if (isSosActive && activeLocalSos != null) {
+                item {
+                    val isAcked = activeLocalSos.isAcknowledged
+                    val ackCount = activeLocalSos.acknowledgedBy.size
+                    val ackColor = if (isAcked) SafeGreen else WarningAmber
+                    val ackTitle = if (isAcked) {
+                        if (ackCount > 1) "DELIVERY CONFIRMED ($ackCount PEERS)" else "DELIVERY CONFIRMED (1 PEER)"
+                    } else {
+                        "WAITING FOR BLE PEER ACK"
+                    }
+                    val ackDesc = if (isAcked) {
+                        "Acknowledged by: ${activeLocalSos.acknowledgedBy.joinToString(", ") { it.takeLast(6) }}"
+                    } else {
+                        "Beacon transmitting over BLE mesh. Waiting for nearby peer nodes to acknowledge receipt..."
+                    }
+
+                    GlassCard(borderColor = ackColor.copy(alpha = 0.5f)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            PulsingDot(color = ackColor, size = 10.dp)
+                            Column {
+                                Text(
+                                    text = "BLE MESH ACKNOWLEDGEMENT",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TextSecondary,
+                                    letterSpacing = 1.sp
+                                )
+                                Text(
+                                    text = ackTitle,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = ackColor,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = ackDesc,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -492,6 +649,147 @@ private fun TelemetryPill(
             Spacer(modifier = Modifier.height(4.dp))
             Text(text = value, style = MaterialTheme.typography.labelSmall, color = tint, fontWeight = FontWeight.Bold)
             Text(text = label, style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = TextSecondary)
+        }
+    }
+}
+
+@Composable
+private fun LocationTelemetryCard(
+    locationState: LocationState,
+    onRequestPermission: () -> Unit,
+    onOpenLocationSettings: () -> Unit
+) {
+    val statusColor = when (locationState.status) {
+        LocationStatus.FIXED -> SafeGreen
+        LocationStatus.SEARCHING -> WarningAmber
+        LocationStatus.STALE -> WarningAmber
+        LocationStatus.PERMISSION_DENIED -> EmergencyRed
+        LocationStatus.LOCATION_DISABLED -> EmergencyRed
+        LocationStatus.UNAVAILABLE -> EmergencyRed
+    }
+
+    val statusBadgeText = when (locationState.status) {
+        LocationStatus.FIXED -> "SATELLITE LOCK ACQUIRED"
+        LocationStatus.SEARCHING -> "ACQUIRING SATELLITE FIX..."
+        LocationStatus.STALE -> "GPS FIX STALE (> 5 MIN OLD)"
+        LocationStatus.PERMISSION_DENIED -> "PERMISSION DENIED"
+        LocationStatus.LOCATION_DISABLED -> "GPS SERVICES DISABLED"
+        LocationStatus.UNAVAILABLE -> "GPS HARDWARE UNAVAILABLE"
+    }
+
+    GlassCard(borderColor = statusColor.copy(alpha = 0.5f)) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PulsingDot(color = statusColor, size = 10.dp)
+                    Text(
+                        text = "TACTICAL GEOLOCATION (100% OFFLINE)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary,
+                        letterSpacing = 1.sp
+                    )
+                }
+
+                Text(
+                    text = statusBadgeText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = statusColor,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            val coord = locationState.coordinate
+            if (coord != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        val latFormatted = "%.5f° %s".format(
+                            kotlin.math.abs(coord.latitude),
+                            if (coord.latitude >= 0) "N" else "S"
+                        )
+                        val lonFormatted = "%.5f° %s".format(
+                            kotlin.math.abs(coord.longitude),
+                            if (coord.longitude >= 0) "E" else "W"
+                        )
+                        Text(
+                            text = "$latFormatted, $lonFormatted",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = TextPrimary,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 15.sp
+                        )
+                        val accText = locationState.accuracyMeters?.let { " • Accuracy: ±${"%.1f".format(it)}m" } ?: ""
+                        val altText = coord.altitudeMeters?.let { " • Alt: ${it.toInt()}m" } ?: ""
+                        val providerText = locationState.provider?.uppercase() ?: "GPS"
+                        Text(
+                            text = "Provider: $providerText$accText$altText",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            } else {
+                val explanation = when (locationState.status) {
+                    LocationStatus.SEARCHING ->
+                        "Searching for direct satellite fixes. Emergency SOS beacon can still be broadcast immediately without GPS coordinates."
+                    LocationStatus.PERMISSION_DENIED ->
+                        "Location permission is required to tag GPS coordinates in emergency distress beacons."
+                    LocationStatus.LOCATION_DISABLED ->
+                        "Device location is turned off in Android system settings. Turn on GPS to tag coordinates."
+                    LocationStatus.UNAVAILABLE ->
+                        "Location hardware service is unavailable on this device. Outbound SOS will dispatch without coordinates."
+                    else ->
+                        "No coordinate fix available yet. SOS will transmit with empty coordinates."
+                }
+                Text(
+                    text = explanation,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    lineHeight = 16.sp,
+                    fontSize = 12.sp
+                )
+
+                if (locationState.status == LocationStatus.PERMISSION_DENIED) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = onRequestPermission,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = EmergencyRed,
+                            contentColor = Color.White
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text("GRANT LOCATION PERMISSION", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else if (locationState.status == LocationStatus.LOCATION_DISABLED) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = onOpenLocationSettings,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = WarningAmber,
+                            contentColor = DeepSpaceBlack
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text("OPEN LOCATION SETTINGS", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
         }
     }
 }
