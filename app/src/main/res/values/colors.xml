@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#050810</color>
+    <color name="emergency_red">#FF1744</color>
+    <color name="mesh_cyan">#00E5FF</color>
+    <color name="safe_green">#00E676</color>
+    <color name="alert_amber">#FFAB00</color>
+    <color name="surface_dark">#0D1117</color>
+    <color name="deep_black">#050810</color>
+</resources>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ResQMesh</string>
+    <string name="sos_button_desc">Emergency SOS Button</string>
+    <string name="mesh_network_desc">Mesh Network Status</string>
+    <string name="alerts_desc">Emergency Alerts Feed</string>
+    <string name="settings_desc">App Settings</string>
+</resources>
