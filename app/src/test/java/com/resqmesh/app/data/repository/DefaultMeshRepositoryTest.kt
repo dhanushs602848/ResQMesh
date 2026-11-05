@@ -529,4 +529,68 @@ class DefaultMeshRepositoryTest {
         assertEquals(13.0827, dispatchedPackets.first().latitude!!, 0.0001)
         assertEquals(80.2707, dispatchedPackets.first().longitude!!, 0.0001)
     }
+
+    @Test
+    fun inbound_sos_triggers_audio_alert_manager() = runBlocking {
+        val audioAlertManager = com.resqmesh.app.data.audio.NoOpAudioAlertManager()
+        val mockBle = object : BleManager {
+            override val discoveredNodes = MutableStateFlow<List<MeshNode>>(emptyList())
+            override val bleStatus = MutableStateFlow(BleServiceStatus())
+            override val localNodeId: String = "RQM-LOCAL"
+            override val inboundPackets = MutableSharedFlow<MeshPacket>()
+            override fun startMeshDiscovery() {}
+            override fun stopMeshDiscovery() {}
+            override fun refreshDiscovery() {}
+            override suspend fun dispatchMeshPacket(packet: MeshPacket) =
+                com.resqmesh.app.data.ble.BleBroadcastSummary(packet.messageId, 0, 0, emptyList())
+        }
+
+        val testRepo = DefaultMeshRepository(
+            incidentDao = object : com.resqmesh.app.data.local.dao.IncidentDao {
+                override suspend fun insertOrUpdate(incident: com.resqmesh.app.data.local.entity.IncidentEntity) {}
+                override suspend fun getPendingIncidents(): List<com.resqmesh.app.data.local.entity.IncidentEntity> = emptyList()
+                override fun getAllIncidents(): kotlinx.coroutines.flow.Flow<List<com.resqmesh.app.data.local.entity.IncidentEntity>> = kotlinx.coroutines.flow.flowOf(emptyList())
+                override suspend fun getIncidentById(id: String): com.resqmesh.app.data.local.entity.IncidentEntity? = null
+                override suspend fun updateStatus(id: String, status: String, error: String?, attemptAt: Long?) {}
+                override suspend fun markUploaded(id: String) {}
+                override fun getPendingCount(): kotlinx.coroutines.flow.Flow<Int> = kotlinx.coroutines.flow.flowOf(0)
+                override suspend fun updateAcknowledgment(id: String, acknowledgedBy: String, timestamp: Long) {}
+            },
+            api = com.resqmesh.app.data.remote.RetrofitClient.api,
+            bleManager = mockBle,
+            meshRelayEngine = object : com.resqmesh.app.data.ble.MeshRelayEngine {
+                override suspend fun processAndRelay(packet: MeshPacket, incomingPeerAddress: String?): com.resqmesh.app.data.ble.RelayResult =
+                    com.resqmesh.app.data.ble.RelayResult(packet.messageId, com.resqmesh.app.data.ble.RelayDecision.SKIPPED_NO_PEERS, null, null, "Mock")
+                override fun isAlreadyRelayed(messageId: String): Boolean = false
+                override fun resetDuplicateTracking() {}
+            },
+            locationTracker = object : com.resqmesh.app.data.location.LocationTracker {
+                override val locationState = MutableStateFlow(com.resqmesh.app.data.location.LocationState())
+                override fun startTracking() {}
+                override fun stopTracking() {}
+                override fun refreshLocation() {}
+                override fun getCurrentCoordinate(): GeoCoordinate? = null
+            },
+            audioAlertManager = audioAlertManager
+        )
+
+        val inboundPacket = MeshPacket(
+            messageId = "INBOUND-AUDIO-TEST",
+            originNodeId = "PEER-01",
+            senderNodeId = "PEER-01",
+            packetType = com.resqmesh.app.data.model.MeshPacketType.SOS,
+            priority = IncidentPriority.CRITICAL,
+            title = "FLASH FLOOD EMERGENCY",
+            content = "High water rising rapidly",
+            latitude = 13.0827,
+            longitude = 80.2707,
+            timestamp = System.currentTimeMillis(),
+            hopCount = 0
+        )
+
+        testRepo.handleInboundSos(inboundPacket)
+
+        assertEquals(1, audioAlertManager.playedPriorities.size)
+        assertEquals(IncidentPriority.CRITICAL, audioAlertManager.playedPriorities.first())
+    }
 }

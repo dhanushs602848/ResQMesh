@@ -1,6 +1,8 @@
 package com.resqmesh.app.data.repository
 
 import android.util.Log
+import com.resqmesh.app.data.audio.AudioAlertManager
+import com.resqmesh.app.data.audio.NoOpAudioAlertManager
 import com.resqmesh.app.data.ble.BleBroadcastSummary
 import com.resqmesh.app.data.ble.BleManager
 import com.resqmesh.app.data.ble.BleServiceStatus
@@ -81,7 +83,8 @@ class DefaultMeshRepository @Inject constructor(
     private val api: ResQMeshApi,
     private val bleManager: BleManager,
     private val meshRelayEngine: MeshRelayEngine,
-    private val locationTracker: LocationTracker
+    private val locationTracker: LocationTracker,
+    private val audioAlertManager: AudioAlertManager
 ) : MeshRepository {
 
     // Constructor passing (incidentDao, api, bleManager, meshRelayEngine)
@@ -95,7 +98,8 @@ class DefaultMeshRepository @Inject constructor(
         api = api,
         bleManager = bleManager,
         meshRelayEngine = meshRelayEngine,
-        locationTracker = createDefaultMockLocationTracker()
+        locationTracker = createDefaultMockLocationTracker(),
+        audioAlertManager = NoOpAudioAlertManager()
     )
 
     // Secondary constructor for tests passing (incidentDao, api, bleManager)
@@ -113,7 +117,8 @@ class DefaultMeshRepository @Inject constructor(
             override fun isAlreadyRelayed(messageId: String): Boolean = false
             override fun resetDuplicateTracking() {}
         },
-        locationTracker = createDefaultMockLocationTracker()
+        locationTracker = createDefaultMockLocationTracker(),
+        audioAlertManager = NoOpAudioAlertManager()
     )
 
     // Zero-arg constructor for unit testing without Dagger/Hilt
@@ -147,7 +152,8 @@ class DefaultMeshRepository @Inject constructor(
             override fun isAlreadyRelayed(messageId: String): Boolean = false
             override fun resetDuplicateTracking() {}
         },
-        locationTracker = createDefaultMockLocationTracker()
+        locationTracker = createDefaultMockLocationTracker(),
+        audioAlertManager = NoOpAudioAlertManager()
     )
 
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -255,6 +261,13 @@ class DefaultMeshRepository @Inject constructor(
 
         // Prepend to broadcast list so UI updates immediately
         _broadcasts.value = listOf(emergencyMessage) + _broadcasts.value
+
+        // Trigger audible and haptic alarm for incoming SOS alert
+        try {
+            audioAlertManager.playAlert(packet.priority)
+        } catch (e: Exception) {
+            Log.w("MeshRepository", "Audio alert playback non-fatal error: ${e.message}")
+        }
 
         // 3. Save to Room database offline queue
         val isoTimestamp = try {
