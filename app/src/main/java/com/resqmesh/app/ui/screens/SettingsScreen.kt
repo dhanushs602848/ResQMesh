@@ -54,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.resqmesh.app.BackendConnectionTest
+import com.resqmesh.app.data.ble.BleServiceStatus
 import com.resqmesh.app.data.model.SystemTelemetry
 import com.resqmesh.app.navigation.Screen
 import com.resqmesh.app.ui.components.FuturisticBottomBar
@@ -82,6 +83,7 @@ fun SettingsScreen(
     onNavigateToMap: () -> Unit = {}
 ) {
     val telemetry by (viewModel?.telemetry?.collectAsState() ?: remember { mutableStateOf(SystemTelemetry()) })
+    val bleStatus by (viewModel?.bleStatus?.collectAsState() ?: remember { mutableStateOf(BleServiceStatus()) })
     val pendingUploadCount by (viewModel?.pendingUploadCount?.collectAsState() ?: remember { mutableStateOf(0) })
     val coroutineScope = rememberCoroutineScope()
     var connectionStatus by remember { mutableStateOf<String?>(null) }
@@ -165,7 +167,7 @@ fun SettingsScreen(
                     SettingsRow(
                         icon = Icons.Default.Security,
                         label = "Mesh Node Hardware ID",
-                        value = "RQM-7701-ALPHA",
+                        value = bleStatus.localNodeId.ifBlank { "RQM-LOCAL" },
                         tint = ElectricCyan
                     )
                     SettingsRow(

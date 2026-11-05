@@ -25,4 +25,12 @@ object BleConstants {
     const val PEER_STALE_TIMEOUT_MS = 25_000L
     const val PEER_EXPIRY_TIMEOUT_MS = 60_000L
     const val CLEANUP_INTERVAL_MS = 8_000L
+
+    // Valid ResQMesh Node ID: Starts with "RQM-" followed by 4 to 16 alphanumeric characters or hyphens
+    val NODE_ID_REGEX = Regex("^RQM-[A-Z0-9_-]{4,16}$", RegexOption.IGNORE_CASE)
+
+    fun isValidNodeId(nodeId: String?): Boolean {
+        if (nodeId.isNullOrBlank()) return false
+        return NODE_ID_REGEX.matches(nodeId.trim())
+    }
 }

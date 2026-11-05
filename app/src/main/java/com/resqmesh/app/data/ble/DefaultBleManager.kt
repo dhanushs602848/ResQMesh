@@ -374,14 +374,11 @@ class DefaultBleManager @Inject constructor(
         if (isAdvertisingActive) return
 
         val adapter = bluetoothAdapter ?: return
-        if (!adapter.isMultipleAdvertisementSupported) {
-            Log.w(TAG, "Device does not support multiple BLE advertisements")
-            return
-        }
 
         advertiser = adapter.bluetoothLeAdvertiser
         if (advertiser == null) {
             Log.w(TAG, "BluetoothLeAdvertiser is unavailable on this device")
+            updateBleStatus(overrideMessage = "BLE Advertising unavailable on device")
             return
         }
 
@@ -400,9 +397,12 @@ class DefaultBleManager @Inject constructor(
             .setIncludeTxPowerLevel(false)
             .build()
 
-        // Secondary scan response includes device name
+        // Scan response carries validated Local Node ID via Service Data
+        // Omitting device name prevents ADVERTISE_FAILED_DATA_TOO_LARGE on long phone names
         val scanResponse = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
+            .addServiceData(BleConstants.RESQMESH_PARCEL_UUID, localNodeId.toByteArray(Charsets.UTF_8))
+            .setIncludeDeviceName(false)
+            .setIncludeTxPowerLevel(false)
             .build()
 
         try {
@@ -416,6 +416,7 @@ class DefaultBleManager @Inject constructor(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Exception starting BLE advertising: ${e.message}")
+            updateBleStatus(overrideMessage = "Advertising start error: ${e.message}")
         }
     }
 
@@ -463,30 +464,53 @@ class DefaultBleManager @Inject constructor(
         val rssi = result.rssi
         val now = System.currentTimeMillis()
 
-        // Derive identifiable peer name
+        // 1. Extract and validate remote Node ID from Service Data
+        val serviceDataBytes = result.scanRecord?.getServiceData(BleConstants.RESQMESH_PARCEL_UUID)
+        val extractedNodeId = if (serviceDataBytes != null && serviceDataBytes.isNotEmpty()) {
+            val candidate = String(serviceDataBytes, Charsets.UTF_8).trim()
+            if (BleConstants.isValidNodeId(candidate)) candidate else null
+        } else {
+            null
+        }
+
+        // 2. Prevent self-loopback: ignore advertisements emitted by our own local node
+        if (extractedNodeId != null && extractedNodeId == localNodeId) {
+            return
+        }
+
+        // 3. Fallback device name from Bluetooth Device or ScanRecord (never substitute MAC for Node ID)
         val deviceName = try {
             if (BlePermissionHelper.hasPermissions(context)) device.name else null
         } catch (_: SecurityException) {
             null
-        } ?: result.scanRecord?.deviceName ?: "ResQ Peer ${address.takeLast(5)}"
+        } ?: result.scanRecord?.deviceName ?: "ResQ Peer"
+
+        val displayName = if (extractedNodeId != null) {
+            "Node $extractedNodeId"
+        } else {
+            deviceName
+        }
 
         val existing = peersMap[address]
         val updatedNode = if (existing != null) {
             existing.copy(
+                name = if (extractedNodeId != null) "Node $extractedNodeId" else existing.name,
+                nodeId = extractedNodeId ?: existing.nodeId,
                 rssi = rssi,
                 lastSeenTimestamp = now,
                 status = NodeStatus.ONLINE
             )
         } else {
-            Log.i(TAG, "Discovered NEW ResQMesh peer node: $address ($deviceName) RSSI=$rssi dBm")
+            Log.i(TAG, "Discovered NEW ResQMesh peer node: $address (nodeId=$extractedNodeId, name=$displayName) RSSI=$rssi dBm")
             MeshNode(
                 id = address,
-                name = deviceName,
+                name = displayName,
                 rssi = rssi,
                 hopCount = 1, // Directly discovered peer = 1 hop
                 isRelayCapable = true,
                 lastSeenTimestamp = now,
-                status = NodeStatus.ONLINE
+                status = NodeStatus.ONLINE,
+                nodeId = extractedNodeId
             )
         }
 
@@ -646,7 +670,8 @@ class DefaultBleManager @Inject constructor(
         val targetPeers = peersMap.values.filter {
             it.status == NodeStatus.ONLINE &&
                     it.id !in excludePeerIds &&
-                    it.name !in excludePeerIds
+                    it.name !in excludePeerIds &&
+                    (it.nodeId == null || it.nodeId !in excludePeerIds)
         }
         if (targetPeers.isEmpty()) {
             Log.i(TAG, "No online peers currently discovered for dispatch of [${packet.messageId}] (excluded: $excludePeerIds)")
@@ -736,7 +761,7 @@ class DefaultBleManager @Inject constructor(
             state = state,
             isBleSupported = hasBle,
             isBluetoothEnabled = isEnabled,
-            isAdvertisingSupported = bluetoothAdapter?.isMultipleAdvertisementSupported == true,
+            isAdvertisingSupported = advertiser != null || bluetoothAdapter?.isMultipleAdvertisementSupported == true,
             hasPermissions = hasPermissions,
             isScanning = isScanningActive,
             isAdvertising = isAdvertisingActive,
@@ -749,9 +774,10 @@ class DefaultBleManager @Inject constructor(
     private fun getOrCreateNodeId(): String {
         val prefs = context.getSharedPreferences("resqmesh_ble_prefs", Context.MODE_PRIVATE)
         val existing = prefs.getString("local_node_id", null)
-        if (!existing.isNullOrBlank()) return existing
+        if (!existing.isNullOrBlank() && BleConstants.isValidNodeId(existing)) return existing
 
-        val newId = "RQM-" + UUID.randomUUID().toString().take(4).uppercase()
+        val hexPart = UUID.randomUUID().toString().replace("-", "").take(6).uppercase()
+        val newId = "RQM-$hexPart"
         prefs.edit().putString("local_node_id", newId).apply()
         return newId
     }

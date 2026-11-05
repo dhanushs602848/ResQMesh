@@ -17,7 +17,8 @@ data class MeshNode(
     val hopCount: Int,
     val isRelayCapable: Boolean,
     val lastSeenTimestamp: Long,
-    val status: NodeStatus = NodeStatus.ONLINE
+    val status: NodeStatus = NodeStatus.ONLINE,
+    val nodeId: String? = null
 )
 
 enum class NodeStatus {

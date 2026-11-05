@@ -211,7 +211,8 @@ class DefaultMeshRelayEngine(
         val onlinePeers = bleManager.discoveredNodes.value.filter { peer ->
             peer.status == NodeStatus.ONLINE &&
                     peer.id !in excludeIds &&
-                    peer.name !in excludeIds
+                    peer.name !in excludeIds &&
+                    (peer.nodeId == null || peer.nodeId !in excludeIds)
         }
 
         if (onlinePeers.isEmpty()) {

@@ -57,7 +57,10 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -65,6 +68,7 @@ import com.resqmesh.app.data.ble.BleOperationalState
 import com.resqmesh.app.data.ble.BlePermissionHelper
 import com.resqmesh.app.data.ble.BleServiceStatus
 import com.resqmesh.app.data.model.MeshNode
+import com.resqmesh.app.data.model.NodeStatus
 import com.resqmesh.app.data.model.SystemTelemetry
 import com.resqmesh.app.navigation.Screen
 import com.resqmesh.app.ui.components.FuturisticBottomBar
@@ -141,6 +145,11 @@ fun MeshNetworkScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // 0. Prominent Local Node Identity Card (Always Visible)
+            item {
+                LocalNodeIdCard(localNodeId = bleStatus.localNodeId)
+            }
+
             // BLE Operational State Banner
             item {
                 when (bleStatus.state) {
@@ -235,7 +244,7 @@ fun MeshNetworkScreen(
 
             // 1. Central Radar Visualization
             item {
-                MeshTopologyRadarCard()
+                MeshTopologyRadarCard(nodes = liveNodes)
             }
 
             // 2. Topology Telemetry Metrics
@@ -341,7 +350,71 @@ fun MeshNetworkScreen(
 }
 
 @Composable
-private fun MeshTopologyRadarCard() {
+private fun LocalNodeIdCard(localNodeId: String) {
+    val displayId = localNodeId.ifBlank { "INITIALIZING..." }
+    GlowCard(glowColor = ElectricCyan) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(ElectricCyan.copy(alpha = 0.15f), CircleShape)
+                        .border(1.dp, ElectricCyan.copy(alpha = 0.4f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = "Node Identity",
+                        tint = ElectricCyan,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "LOCAL MESH NODE IDENTITY",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        text = displayId,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = ElectricCyan,
+                        letterSpacing = 2.sp
+                    )
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(SafeGreen.copy(alpha = 0.15f))
+                    .border(1.dp, SafeGreen.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = "LOCAL HOST",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SafeGreen,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MeshTopologyRadarCard(nodes: List<MeshNode>) {
     val infiniteTransition = rememberInfiniteTransition(label = "mesh_radar")
     val sweepAngle by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -352,6 +425,7 @@ private fun MeshTopologyRadarCard() {
         ),
         label = "radar_sweep"
     )
+    val textMeasurer = rememberTextMeasurer()
 
     GlowCard(glowColor = ElectricCyan) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -382,7 +456,7 @@ private fun MeshTopologyRadarCard() {
                     val center = Offset(size.width / 2, size.height / 2)
                     val maxRadius = size.minDimension / 2
 
-                    // Concentric Range Rings
+                    // Concentric Range Rings (-40dBm to -95dBm)
                     for (i in 1..4) {
                         drawCircle(
                             color = ElectricCyan.copy(alpha = 0.12f * i),
@@ -424,19 +498,106 @@ private fun MeshTopologyRadarCard() {
                         cap = StrokeCap.Round
                     )
 
+                    // Plot Discovered Peer Blips
+                    nodes.forEach { peer ->
+                        val identifier = peer.nodeId ?: peer.id
+                        val (blipX, blipY) = RadarPositionHelper.calculateBlipOffset(
+                            identifier = identifier,
+                            rssi = peer.rssi,
+                            centerX = center.x,
+                            centerY = center.y,
+                            maxRadiusPx = maxRadius
+                        )
+                        val blipPos = Offset(blipX, blipY)
+
+                        val bearingDeg = RadarPositionHelper.calculateStableBearing(identifier)
+                        val angleDiff = ((sweepAngle - bearingDeg + 360f) % 360f)
+                        val isSweptRecently = angleDiff in 0f..40f
+
+                        val blipColor = if (peer.status == NodeStatus.ONLINE) SafeGreen else WarningAmber
+
+                        // Vector from center to peer blip
+                        drawLine(
+                            color = blipColor.copy(alpha = if (isSweptRecently) 0.45f else 0.18f),
+                            start = center,
+                            end = blipPos,
+                            strokeWidth = 1.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f)
+                        )
+
+                        // Outer Pulse Glow
+                        drawCircle(
+                            color = blipColor.copy(alpha = if (isSweptRecently) 0.6f else 0.25f),
+                            radius = (if (isSweptRecently) 10.dp else 6.5.dp).toPx(),
+                            center = blipPos
+                        )
+
+                        // Core Dot
+                        drawCircle(
+                            color = blipColor,
+                            radius = 3.5.dp.toPx(),
+                            center = blipPos
+                        )
+                        drawCircle(
+                            color = Color.White,
+                            radius = 1.5.dp.toPx(),
+                            center = blipPos
+                        )
+
+                        // Node ID and RSSI Label
+                        val labelText = (peer.nodeId ?: peer.name.take(10)) + "\n${peer.rssi}dBm"
+                        val textResult = textMeasurer.measure(
+                            text = labelText,
+                            style = TextStyle(
+                                color = Color.White,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                        )
+                        val labelX = (blipX - (textResult.size.width / 2f)).coerceIn(4f, size.width - textResult.size.width - 4f)
+                        val labelY = if (blipY < center.y) {
+                            (blipY - textResult.size.height - 3f).coerceAtLeast(4f)
+                        } else {
+                            (blipY + 6f).coerceAtMost(size.height - textResult.size.height - 4f)
+                        }
+                        drawText(
+                            textLayoutResult = textResult,
+                            topLeft = Offset(labelX, labelY)
+                        )
+                    }
+
                     // Local Host Center Indicator
                     drawCircle(color = SafeGreen, radius = 6.dp.toPx(), center = center)
                     drawCircle(color = SafeGreen.copy(alpha = 0.4f), radius = 10.dp.toPx(), center = center, style = Stroke(width = 1.5.dp.toPx()))
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Autonomous Scanning & Advertising Enabled (128-bit UUID: 7b1f3c8a)",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary,
-                fontSize = 11.sp
-            )
+            Spacer(modifier = Modifier.height(10.dp))
+            if (nodes.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    PulsingDot(color = SafeGreen, size = 6.dp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "ACTIVE RADAR CONTACTS: ${nodes.size} PEER(S) PLOTTED",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SafeGreen,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp
+                    )
+                }
+            } else {
+                Text(
+                    text = "Autonomous Scanning & Advertising Enabled (128-bit UUID: 7b1f3c8a)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+            }
         }
     }
 }
@@ -466,6 +627,7 @@ private fun MetricBox(
 private fun PeerNodeItemCard(peer: MeshNode) {
     val isRelay = peer.isRelayCapable
     val accentColor = if (isRelay) SafeGreen else ElectricCyan
+    val hasVerifiedNodeId = !peer.nodeId.isNullOrBlank()
 
     GlassCard {
         Row(
@@ -493,8 +655,39 @@ private fun PeerNodeItemCard(peer: MeshNode) {
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
-                    Text(text = peer.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = TextPrimary)
-                    Text(text = "${peer.id} • ${peer.status.name} • 1 Hop (Direct BLE)", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = peer.nodeId ?: peer.name,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (hasVerifiedNodeId) ElectricCyan else TextPrimary
+                        )
+                        if (hasVerifiedNodeId) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(SafeGreen.copy(alpha = 0.2f))
+                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    text = "VERIFIED",
+                                    fontSize = 8.sp,
+                                    color = SafeGreen,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = if (hasVerifiedNodeId) {
+                            "Node ID: ${peer.nodeId} • ${peer.status.name} • 1 Hop • MAC: ${peer.id}"
+                        } else {
+                            "Node ID: Pending Discovery • ${peer.status.name} • 1 Hop • MAC: ${peer.id}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
                 }
             }
 
