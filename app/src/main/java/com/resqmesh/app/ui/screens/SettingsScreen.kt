@@ -22,14 +22,17 @@ import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudQueue
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -70,6 +73,7 @@ import com.resqmesh.app.ui.theme.TextPrimary
 import com.resqmesh.app.ui.theme.TextSecondary
 import com.resqmesh.app.ui.theme.WarningAmber
 import com.resqmesh.app.ui.viewmodel.ResQMeshViewModel
+import com.resqmesh.security.model.SecurityProvisioningState
 import kotlinx.coroutines.launch
 
 @Composable
@@ -85,6 +89,7 @@ fun SettingsScreen(
     val telemetry by (viewModel?.telemetry?.collectAsState() ?: remember { mutableStateOf(SystemTelemetry()) })
     val bleStatus by (viewModel?.bleStatus?.collectAsState() ?: remember { mutableStateOf(BleServiceStatus()) })
     val pendingUploadCount by (viewModel?.pendingUploadCount?.collectAsState() ?: remember { mutableStateOf(0) })
+    val securityState by (viewModel?.securityState?.collectAsState() ?: remember { mutableStateOf(SecurityProvisioningState()) })
     val coroutineScope = rememberCoroutineScope()
     var connectionStatus by remember { mutableStateOf<String?>(null) }
     var isTestingConnection by remember { mutableStateOf(false) }
@@ -319,6 +324,84 @@ fun SettingsScreen(
                         tint = WarningAmber,
                         defaultChecked = true
                     )
+                }
+            }
+
+            // Responder Security (Phase 3 Foundation)
+            item {
+                SettingsSection(title = "RESPONDER MESH SECURITY (PHASE 3)") {
+                    SettingsRow(
+                        icon = Icons.Default.Security,
+                        label = "Security Module",
+                        value = "AES-256-GCM AEAD",
+                        tint = ElectricCyan
+                    )
+                    SettingsRow(
+                        icon = Icons.Default.VpnKey,
+                        label = "Key Storage Backing",
+                        value = if (securityState.isHardwareBacked) "Hardware Keystore (TEE)" else "Android Keystore",
+                        tint = if (securityState.isHardwareBacked) SafeGreen else ElectricCyan
+                    )
+                    SettingsRow(
+                        icon = Icons.Default.Lock,
+                        label = "Provisioning Status",
+                        value = securityState.statusMessage,
+                        tint = if (securityState.isKeyProvisioned) SafeGreen else WarningAmber
+                    )
+                    SettingsRow(
+                        icon = Icons.Default.Info,
+                        label = "Provisioned Key ID",
+                        value = securityState.activeKeyId ?: "None (Unprovisioned)",
+                        tint = TextSecondary
+                    )
+                    SettingsRow(
+                        icon = Icons.Default.Fingerprint,
+                        label = "SHA-256 Fingerprint",
+                        value = securityState.keyFingerprint?.take(16)?.let { "$it..." } ?: "None",
+                        tint = TextSecondary
+                    )
+                    SettingsRow(
+                        icon = Icons.Default.Hub,
+                        label = "Live BLE Route",
+                        value = "UNCONNECTED (Safety Isolated)",
+                        tint = WarningAmber
+                    )
+
+                    // Ephemeral Test Key Controls (Testing & verification; no hardcoded keys)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                viewModel?.provisionEphemeralTestKey()
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = ElectricCyan,
+                                contentColor = DeepSpaceBlack
+                            ),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(text = "TEST PROVISION", fontWeight = FontWeight.Bold)
+                        }
+
+                        if (securityState.isKeyProvisioned) {
+                            Button(
+                                onClick = {
+                                    viewModel?.removeProvisionedKey(securityState.activeKeyId ?: "responder-group-test")
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = EmergencyRed,
+                                    contentColor = DeepSpaceBlack
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(text = "CLEAR KEY", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                 }
             }
 

@@ -12,22 +12,60 @@ import com.resqmesh.app.data.model.MeshNode
 import com.resqmesh.app.data.model.SystemTelemetry
 import com.resqmesh.app.data.model.UploadStatus
 import com.resqmesh.app.data.repository.MeshRepository
+import com.resqmesh.security.keys.ResponderKeyProvisioner
+import com.resqmesh.security.model.KeyProvisioningResult
+import com.resqmesh.security.model.SecurityProvisioningState
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.security.SecureRandom
 import javax.inject.Inject
 
 @HiltViewModel
 class ResQMeshViewModel @Inject constructor(
-    private val repository: MeshRepository
+    private val repository: MeshRepository,
+    private val keyProvisioner: ResponderKeyProvisioner? = null
 ) : ViewModel() {
 
     init {
         viewModelScope.launch {
             repository.startDiscovery()
         }
+    }
+
+    private val _securityState = MutableStateFlow(
+        keyProvisioner?.getProvisioningState() ?: SecurityProvisioningState()
+    )
+    val securityState: StateFlow<SecurityProvisioningState> = _securityState.asStateFlow()
+
+    fun refreshSecurityState() {
+        _securityState.value = keyProvisioner?.getProvisioningState() ?: SecurityProvisioningState()
+    }
+
+    /**
+     * Imports an ephemeral randomly-generated 32-byte test key for device verification.
+     * Temporary key bytes are immediately zeroized in memory upon import.
+     */
+    fun provisionEphemeralTestKey(keyId: String = "responder-group-test"): Result<KeyProvisioningResult> {
+        val provisioner = keyProvisioner ?: return Result.failure(IllegalStateException("Key provisioner unavailable"))
+        val testBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val result = provisioner.provisionKey(keyId, testBytes, clearSourceBytes = true)
+        refreshSecurityState()
+        return result
+    }
+
+    /**
+     * Removes the provisioned key from secure storage.
+     */
+    fun removeProvisionedKey(keyId: String = "responder-group-test"): Boolean {
+        val provisioner = keyProvisioner ?: return false
+        val removed = provisioner.removeKey(keyId)
+        refreshSecurityState()
+        return removed
     }
 
     val nodes: StateFlow<List<MeshNode>> = repository.getDiscoveredNodes()

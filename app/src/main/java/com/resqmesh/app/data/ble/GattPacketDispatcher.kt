@@ -41,7 +41,8 @@ interface GattPacketDispatcher {
  */
 @Singleton
 class DefaultGattPacketDispatcher @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val mtuNegotiator: BleMtuNegotiator = BleMtuNegotiator()
 ) : GattPacketDispatcher {
 
     override suspend fun dispatchToPeer(
@@ -137,21 +138,8 @@ class DefaultGattPacketDispatcher @Inject constructor(
                 // Await connection completion
                 connectDeferred.await()
 
-                // 3. Negotiate high MTU (512 bytes)
-                var negotiatedMtu = 23
-                try {
-                    val requested = connectedGatt.requestMtu(512)
-                    if (requested) {
-                        negotiatedMtu = try {
-                            kotlinx.coroutines.withTimeoutOrNull(2000L) { mtuDeferred.await() } ?: 23
-                        } catch (_: Exception) {
-                            23
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.d(TAG, "MTU negotiation skipped: ${e.message}")
-                    negotiatedMtu = 23
-                }
+                // 3. Negotiate high MTU (up to 512 bytes) safely via BleMtuNegotiator
+                val negotiatedMtu = mtuNegotiator.negotiateMtu(connectedGatt, mtuDeferred)
 
                 // 4. Discover remote GATT services
                 connectedGatt.discoverServices()
@@ -181,7 +169,7 @@ class DefaultGattPacketDispatcher @Inject constructor(
 
                 // 5. Prepare byte payload and fragments
                 val rawBytes = packet.toByteArray()
-                val maxPayloadPerWrite = (negotiatedMtu - 3).coerceAtLeast(20)
+                val maxPayloadPerWrite = mtuNegotiator.calculateUsablePayload(negotiatedMtu)
 
                 val chunksToWrite: List<ByteArray> = if (rawBytes.size <= maxPayloadPerWrite) {
                     listOf(rawBytes)
@@ -263,6 +251,7 @@ class DefaultGattPacketDispatcher @Inject constructor(
                 error = e.message ?: "GATT transmission failed"
             )
         } finally {
+            mtuNegotiator.removePeer(address)
             // 7. Unconditionally disconnect and release GATT client resources
             try {
                 gatt?.disconnect()
