@@ -9,8 +9,11 @@ import com.resqmesh.app.data.model.MeshNode
 import com.resqmesh.app.data.model.SystemTelemetry
 import com.resqmesh.app.data.repository.MeshRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -19,6 +22,11 @@ import javax.inject.Inject
 class ResQMeshViewModel @Inject constructor(
     private val repository: MeshRepository
 ) : ViewModel() {
+
+    private val _isRefreshingTopology = MutableStateFlow(false)
+    val isRefreshingTopology: StateFlow<Boolean> = _isRefreshingTopology.asStateFlow()
+    private val _topologyError = MutableStateFlow<String?>(null)
+    val topologyError: StateFlow<String?> = _topologyError.asStateFlow()
 
     val nodes: StateFlow<List<MeshNode>> = repository.getDiscoveredNodes()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -52,7 +60,17 @@ class ResQMeshViewModel @Inject constructor(
 
     fun refreshMeshTopology() {
         viewModelScope.launch {
-            repository.refreshTopology()
+            _isRefreshingTopology.value = true
+            _topologyError.value = null
+            try {
+                repository.refreshTopology()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _topologyError.value = error.message ?: "Mesh refresh failed. Try again."
+            } finally {
+                _isRefreshingTopology.value = false
+            }
         }
     }
 }

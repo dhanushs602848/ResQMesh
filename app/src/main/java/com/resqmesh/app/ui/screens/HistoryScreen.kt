@@ -20,7 +20,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Outbox
 import androidx.compose.material.icons.filled.Sos
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,6 +30,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import com.resqmesh.app.data.model.IncidentPriority
 import com.resqmesh.app.ui.components.GlassCard
 import com.resqmesh.app.ui.components.ResQTopBar
+import com.resqmesh.app.ui.components.ResQEmptyState
 import com.resqmesh.app.ui.theme.DeepSpaceBlack
 import com.resqmesh.app.ui.theme.ElectricCyan
 import com.resqmesh.app.ui.theme.EmergencyRed
@@ -60,6 +64,8 @@ fun HistoryScreen(
     onNavigateBack: () -> Unit
 ) {
     val liveBroadcasts by (viewModel?.broadcasts?.collectAsState() ?: remember { mutableStateOf(emptyList()) })
+    var query by remember { mutableStateOf("") }
+    var selectedFilter by remember { mutableStateOf("ALL") }
 
     val dynamicLogs = remember(liveBroadcasts) {
         val broadcastLogs = liveBroadcasts.map { msg ->
@@ -76,13 +82,15 @@ fun HistoryScreen(
             )
         }
 
-        val baseLogs = listOf(
-            HistoryLogItem("H-1", "SOS TRANSMISSION", "Emergency Beacon Disarmed", "Distress test canceled by operator cleanly.", "10:14 AM", true),
-            HistoryLogItem("H-2", "PACKET RELAY", "Multi-Hop Broadcast Forwarded", "Forwarded weather bulletin for Sector 4 peer node.", "09:48 AM", false),
-            HistoryLogItem("H-3", "MESH DISCOVERY", "3 Peer Nodes Synchronized", "Formed direct BLE mesh clusters with ID RQM-042.", "09:12 AM", false)
-        )
-
-        (broadcastLogs + baseLogs).distinctBy { it.id }
+        broadcastLogs.distinctBy { it.id }
+    }
+    val filteredLogs = dynamicLogs.filter { log ->
+        val matchesCategory = when (selectedFilter) {
+            "SOS" -> log.isDistress
+            "SYSTEM" -> !log.isDistress
+            else -> true
+        }
+        matchesCategory && (query.isBlank() || listOf(log.title, log.detail, log.type, log.id).any { it.contains(query, ignoreCase = true) })
     }
 
     Scaffold(
@@ -105,18 +113,42 @@ fun HistoryScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "CHRONOLOGICAL EVENT TIMELINE (${dynamicLogs.size} ENTRIES)",
+                        text = "CHRONOLOGICAL EVENT TIMELINE (${filteredLogs.size} ENTRIES)",
                         style = MaterialTheme.typography.labelSmall,
                         color = TextSecondary,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp
                     )
-                    Text(text = "LOCAL PERSISTENT STORAGE", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = SafeGreen)
+                    Text(text = "LIVE MESH EVENT FEED", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, color = SafeGreen)
                 }
             }
 
-            items(dynamicLogs.size) { idx ->
-                val log = dynamicLogs[idx]
+            item {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Search event history") }
+                )
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("ALL", "SOS", "SYSTEM").forEach { filter ->
+                        FilterChip(selected = selectedFilter == filter, onClick = { selectedFilter = filter }, label = { Text(filter) })
+                    }
+                }
+            }
+
+            if (filteredLogs.isEmpty()) {
+                item {
+                    ResQEmptyState(
+                        title = if (dynamicLogs.isEmpty()) "No history yet" else "No matching events",
+                        message = if (dynamicLogs.isEmpty()) "Mesh broadcasts will appear here as they are received." else "Try a different search or category."
+                    )
+                }
+            } else items(filteredLogs.size) { idx ->
+                val log = filteredLogs[idx]
                 val accent = if (log.isDistress) EmergencyRed else ElectricCyan
 
                 GlassCard(borderColor = accent.copy(alpha = 0.4f)) {

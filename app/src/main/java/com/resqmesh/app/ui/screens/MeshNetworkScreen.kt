@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,13 +29,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Radio
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Router
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -62,6 +66,9 @@ import com.resqmesh.app.ui.components.GlowCard
 import com.resqmesh.app.ui.components.PulsingDot
 import com.resqmesh.app.ui.components.ResQCard
 import com.resqmesh.app.ui.components.ResQTopBar
+import com.resqmesh.app.ui.components.ResQEmptyState
+import com.resqmesh.app.ui.components.ResQErrorBanner
+import com.resqmesh.app.ui.components.ResQLoadingShimmer
 import com.resqmesh.app.ui.theme.BorderGlass
 import com.resqmesh.app.ui.theme.DeepBlueNeon
 import com.resqmesh.app.ui.theme.DeepSpaceBlack
@@ -73,6 +80,8 @@ import com.resqmesh.app.ui.theme.TextPrimary
 import com.resqmesh.app.ui.theme.TextSecondary
 import com.resqmesh.app.ui.viewmodel.ResQMeshViewModel
 import kotlin.math.cos
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 @Composable
@@ -94,6 +103,9 @@ fun MeshNetworkScreen(
         )
     })
     val telemetry by (viewModel?.telemetry?.collectAsState() ?: remember { mutableStateOf(SystemTelemetry()) })
+    var selectedPeer by remember { mutableStateOf<MeshNode?>(null) }
+    val isRefreshing by (viewModel?.isRefreshingTopology?.collectAsState() ?: remember { mutableStateOf(false) })
+    val topologyError by (viewModel?.topologyError?.collectAsState() ?: remember { mutableStateOf(null) })
 
     val activeRelaysCount = liveNodes.count { it.isRelayCapable }
     val maxHops = liveNodes.maxOfOrNull { it.hopCount } ?: 0
@@ -176,8 +188,26 @@ fun MeshNetworkScreen(
                 }
             }
 
-            items(liveNodes.size) { index ->
-                PeerNodeItemCard(peer = liveNodes[index])
+            item {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = { viewModel?.refreshMeshTopology() }, enabled = !isRefreshing) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, tint = ElectricCyan)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (isRefreshing) "REFRESHING" else "REFRESH TOPOLOGY", color = ElectricCyan)
+                    }
+                }
+            }
+            if (isRefreshing) item { ResQLoadingShimmer("Refreshing peer topology…") }
+            topologyError?.let { message ->
+                item { ResQErrorBanner(message, onRetry = { viewModel?.refreshMeshTopology() }) }
+            }
+
+            if (liveNodes.isEmpty()) {
+                item { ResQEmptyState("No mesh peers yet", "Nearby peers will appear here when the mesh repository reports them.") }
+            } else {
+                items(liveNodes.size) { index ->
+                    PeerNodeItemCard(peer = liveNodes[index], onClick = { selectedPeer = liveNodes[index] })
+                }
             }
 
             // 4. Physical Medium Capabilities
@@ -186,6 +216,12 @@ fun MeshNetworkScreen(
             }
 
             item { Spacer(modifier = Modifier.height(16.dp)) }
+        }
+    }
+
+    selectedPeer?.let { peer ->
+        ModalBottomSheet(onDismissRequest = { selectedPeer = null }, containerColor = DeepSpaceBlack) {
+            PeerDetailsSheet(peer)
         }
     }
 }
@@ -333,11 +369,11 @@ private fun MetricBox(
 }
 
 @Composable
-private fun PeerNodeItemCard(peer: MeshNode) {
+private fun PeerNodeItemCard(peer: MeshNode, onClick: () -> Unit) {
     val isRelay = peer.isRelayCapable
     val accentColor = if (isRelay) SafeGreen else ElectricCyan
 
-    GlassCard {
+    GlassCard(modifier = Modifier.clickable(onClick = onClick)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -379,6 +415,27 @@ private fun PeerNodeItemCard(peer: MeshNode) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun PeerDetailsSheet(peer: MeshNode) {
+    val quality = when {
+        peer.rssi >= -60 -> "Strong"
+        peer.rssi >= -75 -> "Fair"
+        else -> "Weak"
+    }
+    val estimatedMeters = Math.pow(10.0, (abs(peer.rssi).toDouble() - 59.0) / 20.0).coerceIn(1.0, 100.0)
+    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp)) {
+        Text(peer.name, style = MaterialTheme.typography.headlineSmall, color = TextPrimary, fontWeight = FontWeight.Bold)
+        Text("${peer.id} • ${peer.status.name}", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+        Spacer(Modifier.height(18.dp))
+        Text("LINK QUALITY   $quality (${peer.rssi} dBm)", color = ElectricCyan, style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(8.dp))
+        Text("Estimated distance: about ${estimatedMeters.roundToInt()} m. This is a rough RSSI estimate and can vary with walls, orientation, and radio conditions.", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(12.dp))
+        Text("Relay path: ${peer.hopCount} hop${if (peer.hopCount == 1) "" else "s"} reported. Intermediate peer IDs are not provided by the current mesh data.", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(24.dp))
     }
 }
 

@@ -1,5 +1,15 @@
 package com.resqmesh.app.ui.screens
 
+import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
+import android.location.LocationManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -46,6 +56,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -53,6 +64,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,10 +74,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import com.resqmesh.app.data.model.SystemTelemetry
 import com.resqmesh.app.navigation.Screen
 import com.resqmesh.app.ui.components.Earth3DGlobe
@@ -203,6 +219,10 @@ fun DashboardScreen(
                     )
                 }
 
+                item {
+                    SubsystemPermissionWarning(telemetry, Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                }
+
                 // 5. Hardware Subsystem Grid
                 item {
                     HardwareSubsystemsSection(
@@ -248,6 +268,50 @@ fun DashboardScreen(
                     isBeaconActive = telemetry.activeSosBeacon,
                     onClick = onNavigateToSos
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubsystemPermissionWarning(telemetry: SystemTelemetry, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var permissionRefresh by remember { mutableIntStateOf(0) }
+    val permissions = remember(Build.VERSION.SDK_INT) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE, Manifest.permission.ACCESS_FINE_LOCATION)
+        } else {
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        permissionRefresh++
+    }
+    val missing = remember(permissionRefresh) {
+        permissions.filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }
+    }
+    val hasBluetoothConnect = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+    val bluetoothRadioUnavailable = hasBluetoothConnect && BluetoothAdapter.getDefaultAdapter()?.isEnabled != true
+    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    val deviceLocationDisabled = !LocationManagerCompat.isLocationEnabled(locationManager)
+    val bluetoothUnavailable = !telemetry.isBluetoothEnabled || bluetoothRadioUnavailable
+    val locationUnavailable = !telemetry.isLocationEnabled || deviceLocationDisabled
+    if (missing.isNotEmpty() || bluetoothUnavailable || locationUnavailable) {
+        GlassCard(borderColor = WarningAmber.copy(alpha = 0.55f), modifier = modifier) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("SUBSYSTEM NEEDS ATTENTION", color = WarningAmber, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
+                if (missing.isNotEmpty()) Text("Bluetooth or location permissions are missing. Grant them to enable the related features.", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                if (bluetoothUnavailable) Text("Bluetooth is reported as disabled.", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                if (locationUnavailable) Text("Location is reported as disabled.", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = {
+                    if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
+                    else context.startActivity(
+                        Intent(if (bluetoothUnavailable) Settings.ACTION_BLUETOOTH_SETTINGS else Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+                    )
+                }) {
+                    Text(if (missing.isNotEmpty()) "GRANT PERMISSIONS" else "OPEN BLUETOOTH SETTINGS", color = ElectricCyan)
+                }
             }
         }
     }

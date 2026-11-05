@@ -43,9 +43,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -76,6 +78,7 @@ import com.resqmesh.app.ui.theme.TextPrimary
 import com.resqmesh.app.ui.theme.TextSecondary
 import com.resqmesh.app.ui.theme.WarningAmber
 import com.resqmesh.app.ui.viewmodel.ResQMeshViewModel
+import kotlinx.coroutines.delay
 
 enum class EmergencyType(val label: String, val icon: ImageVector, val color: Color, val priority: IncidentPriority) {
     MEDICAL("Medical Assistance", Icons.Default.LocalHospital, EmergencyRed, IncidentPriority.CRITICAL),
@@ -97,6 +100,25 @@ fun SosScreen(
     val isSosActive = telemetry.activeSosBeacon || localSosActive
     var selectedEmergencyType by remember { mutableStateOf(EmergencyType.MEDICAL) }
     var showConfirmDialog by remember { mutableStateOf(false) }
+    var countdownSeconds by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(countdownSeconds) {
+        if (countdownSeconds > 0) {
+            delay(1_000)
+            val remaining = countdownSeconds - 1
+            countdownSeconds = remaining
+            if (remaining == 0) {
+                showConfirmDialog = false
+                if (viewModel != null) {
+                    viewModel.sendSos(
+                        priority = selectedEmergencyType.priority,
+                        title = selectedEmergencyType.label,
+                        details = "Immediate offline assistance needed: ${selectedEmergencyType.label} incident reported via local beacon."
+                    )
+                } else localSosActive = true
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -128,18 +150,28 @@ fun SosScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = if (isSosActive) "BROADCAST TRANSMITTING" else "STANDBY (READY TO BROADCAST)",
+                                    text = if (isSosActive) "BROADCAST REQUEST ACTIVE" else "STANDBY (READY TO BROADCAST)",
                                     style = MaterialTheme.typography.labelLarge,
                                     color = if (isSosActive) EmergencyRed else SafeGreen,
                                     fontWeight = FontWeight.ExtraBold
                                 )
                                 Text(
-                                    text = if (isSosActive) "Multi-hop relay propagating to peer nodes" else "Tap below to initiate emergency distress signal",
+                                    text = if (isSosActive) "Dispatch active • relay status depends on available mesh reports" else "Tap below to initiate emergency distress signal",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            if (isSosActive) item {
+                GlassCard(borderColor = EmergencyRed.copy(alpha = 0.5f)) {
+                    Column {
+                        Text("SOS DISPATCH STATUS", color = EmergencyRed, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(4.dp))
+                        Text("Broadcast request is active. Relay-hop and acknowledgement updates are not exposed by the current repository.", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -298,7 +330,7 @@ fun SosScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(DeepSpaceBlack.copy(alpha = 0.85f))
-                    .clickable { showConfirmDialog = false },
+                    .clickable { showConfirmDialog = false; countdownSeconds = 0 },
                 contentAlignment = Alignment.Center
             ) {
                 GlassCard(
@@ -332,39 +364,33 @@ fun SosScreen(
                             color = TextSecondary,
                             textAlign = TextAlign.Center
                         )
+                        if (countdownSeconds > 0) {
+                            Spacer(Modifier.height(10.dp))
+                            Text("Broadcast starts in ${countdownSeconds}s. Cancel now to abort.", color = WarningAmber, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
+                        }
                         Spacer(modifier = Modifier.height(20.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             OutlinedButton(
-                                onClick = { showConfirmDialog = false },
+                                onClick = { showConfirmDialog = false; countdownSeconds = 0 },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(12.dp),
                                 border = androidx.compose.foundation.BorderStroke(1.dp, TextSecondary),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
                             ) {
-                                Text("CANCEL")
+                                Text(if (countdownSeconds > 0) "ABORT" else "CANCEL")
                             }
 
                             Button(
-                                onClick = {
-                                    showConfirmDialog = false
-                                    if (viewModel != null) {
-                                        viewModel.sendSos(
-                                            priority = selectedEmergencyType.priority,
-                                            title = selectedEmergencyType.label,
-                                            details = "Immediate offline assistance needed: ${selectedEmergencyType.label} incident reported via local beacon."
-                                        )
-                                    } else {
-                                        localSosActive = true
-                                    }
-                                },
+                                onClick = { if (countdownSeconds == 0) countdownSeconds = 5 },
+                                enabled = countdownSeconds == 0,
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = EmergencyRed)
                             ) {
-                                Text("BROADCAST", fontWeight = FontWeight.Bold)
+                                Text(if (countdownSeconds > 0) "ARMING" else "START 5s COUNTDOWN", fontWeight = FontWeight.Bold)
                             }
                         }
                     }

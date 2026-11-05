@@ -52,6 +52,7 @@ import com.resqmesh.app.ui.components.FuturisticBottomBar
 import com.resqmesh.app.ui.components.GlassCard
 import com.resqmesh.app.ui.components.PulsingDot
 import com.resqmesh.app.ui.components.ResQTopBar
+import com.resqmesh.app.ui.components.ResQEmptyState
 import com.resqmesh.app.ui.theme.DeepSpaceBlack
 import com.resqmesh.app.ui.theme.ElectricCyan
 import com.resqmesh.app.ui.theme.EmergencyRed
@@ -201,14 +202,18 @@ fun AlertsScreen(
                 else -> liveBroadcasts
             }
 
-            items(filtered.size) { index ->
-                val broadcast = filtered[index]
-                TacticalBroadcastCard(
-                    item = broadcast,
-                    onClick = {
-                        viewModel?.acknowledgeAlert(broadcast.id)
-                    }
-                )
+            if (filtered.isEmpty()) {
+                item { ResQEmptyState("Nothing in this alert view", "New broadcasts will appear here when the mesh receives them.") }
+            } else {
+                items(filtered.size) { index ->
+                    val broadcast = filtered[index]
+                    TacticalBroadcastCard(
+                        item = broadcast,
+                        onClick = {
+                            viewModel?.acknowledgeAlert(broadcast.id)
+                        }
+                    )
+                }
             }
 
             item { Spacer(modifier = Modifier.height(16.dp)) }
